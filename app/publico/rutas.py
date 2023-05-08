@@ -36,7 +36,7 @@ def cargar_al_bucket(blob_name, file_path, bucket_name):
         return False
 
 #Extraer documento usando Google vision
-def extraer_texto(file_path, clave_empresa, RFC, blob_name, gc_bucket):
+def extraer_texto(file_path, clave_empresa, RFC, blob_name, gc_bucket, tipo_doc):
 
     if file_path[-3:] == 'pdf':
         batch_size = 2
@@ -45,11 +45,11 @@ def extraer_texto(file_path, clave_empresa, RFC, blob_name, gc_bucket):
             type=vision.Feature.Type.DOCUMENT_TEXT_DETECTION
                 )
 
-        gcs_source_uri = f"gs://{gc_bucket}/{clave_empresa}/{RFC}/{blob_name}"
+        gcs_source_uri = f"gs://{gc_bucket}/{clave_empresa}/{RFC}/{tipo_doc}/{blob_name}"
         gcs_source = vision.GcsSource(uri=gcs_source_uri)
         input_config = vision.InputConfig(gcs_source=gcs_source, mime_type=mime_type)
 
-        gcs_destination_uri = f"gs://{gc_bucket}/{clave_empresa}/{RFC}/{blob_name}"
+        gcs_destination_uri = f"gs://{gc_bucket}/{clave_empresa}/{RFC}/{tipo_doc}/{blob_name}"
         gcs_destination = vision.GcsDestination(uri=gcs_destination_uri)
         output_config = vision.OutputConfig(gcs_destination=gcs_destination, batch_size=batch_size)
 
@@ -111,35 +111,14 @@ def extraer_texto(file_path, clave_empresa, RFC, blob_name, gc_bucket):
     else:
         return 'Formato de documento no valido (pdf, jpg, jpeg)'
 
-#Endpoints:
-
-@bp_publico.route('/cargar-documento/', methods=['GET', 'POST'])
-def cargar_documento():
-
-    '''Carga el documento a la nube y procede a validarlo'''
-
-    clave_empresa = request.args.get('clave')
-    RFC = request.args.get('rfc')
-    tipo_documento = request.args.get('tdoc')
-    ruta_documento = request.args.get('rdoc')
-    token = request.args.get('token')
-
-    nombre_doc = ruta_documento.split('/')[-1]
-    blob_name = f"{RFC}-{tipo_documento}-{datetime.utcnow().isoformat()}-{nombre_doc}"
-    blob_name = blob_name.replace(':', '-')
-
-    gc_bucket = current_app.config['GOOGLE_CLOUD_BUCKET']
-    print(f'Subiendo documento {blob_name}')
-    cargar_al_bucket(f"{clave_empresa}/{RFC}/{blob_name}", ruta_documento, gc_bucket)
-    print(f'Extrayendo texto del documento {blob_name}')
+def cargar_validar_documento(ruta_documento, clave_empresa, RFC, blob_name, gc_bucket, tipo_documento, dir_cargas, host, port, password):
     try:
-        texto = extraer_texto(ruta_documento, clave_empresa, RFC, blob_name, gc_bucket)
+        texto = extraer_texto(ruta_documento, clave_empresa, RFC, blob_name, gc_bucket, tipo_documento)
     except Exception as e:
         print(e)
         return "No ha sido posible la extracción de información del documento"
 
-    dir_uploads = current_app.config['DIR_UPLOADS']
-    info_documento = validar_documento(texto, tipo_documento, ruta_documento, dir_uploads)
+    info_documento = validar_documento(texto, tipo_documento, ruta_documento, dir_cargas)
     print(f'Documento {blob_name} validado')
 
     doc = {
@@ -149,20 +128,18 @@ def cargar_documento():
         'nombre_documento': blob_name,
         'texto_documento': texto,
         'info_documento': info_documento,
-        'google_cloud_url': f'gs://{gc_bucket}/{clave_empresa}/{RFC}/{blob_name}',
+        'google_cloud_url': f'gs://{gc_bucket}/{clave_empresa}/{RFC}/{tipo_documento}{blob_name}',
         'fecha_carga': datetime.utcnow().isoformat()
         }
 
-    host = current_app.config['REDIS_HOST']
-    port = current_app.config['REDIS_PORT']
-    password = current_app.config['REDIS_PASSWORD']
-
+    #Guardar en Redis
     try:
         rj = Client(host=host, port=port, password=password)       
         rj.jsonset('doc:{}'.format(blob_name), Path.rootPath(), doc)
     except Exception as e:
         print(e)
 
+    #Guardar en Postgres
     try:
         documento = Carga_Documentos()
         documento.clave_empresa = clave_empresa
@@ -177,3 +154,68 @@ def cargar_documento():
     except Exception as e:
         print(e)
     return doc
+
+#Endpoints:
+
+@bp_publico.route('/cargar-documento/', methods=['GET', 'POST'])
+def cargar_documento():
+
+    '''Carga el documento a la nube y procede a validarlo'''
+
+    clave_empresa = request.args.get('clave')
+    RFC = request.args.get('rfc')
+    tipo_documento = request.args.get('tdoc')
+    ruta_documento = request.args.get('rdoc')
+    tipo_carga = request.args.get('tcarga')
+    token = request.args.get('token')
+
+    nombre_doc = ruta_documento.split('/')[-1]
+    blob_name = f"{RFC}-{tipo_documento}-{datetime.utcnow().isoformat()}-{nombre_doc}"
+    blob_name = blob_name.replace(':', '-')
+
+    gc_bucket = current_app.config['GOOGLE_CLOUD_BUCKET']
+    dir_cargas = current_app.config['DIR_CARGAS']
+
+    print(f'Subiendo documento {blob_name}')
+    cargar_al_bucket(f"{clave_empresa}/{RFC}/{tipo_documento}/{blob_name}", ruta_documento, gc_bucket)
+    print(f'Extrayendo texto del documento {blob_name}')
+
+
+    host = current_app.config['REDIS_HOST']
+    port = current_app.config['REDIS_PORT']
+    password = current_app.config['REDIS_PASSWORD']
+    try:
+        queue = Queue(connection=Redis( host=host, port=port, password=password))
+        if tipo_carga == 's':
+            doc = queue.enqueue(cargar_validar_documento, 
+                            ruta_documento, 
+                            clave_empresa, 
+                            RFC, 
+                            blob_name, 
+                            gc_bucket, 
+                            tipo_documento, 
+                            dir_cargas, 
+                            host,
+                            port,
+                            password)
+
+            return 'El documento ha sido cargado con éxito', 200
+
+        elif tipo_carga == 'c':
+            doc = cargar_validar_documento(ruta_documento, 
+                                        clave_empresa, 
+                                        RFC, 
+                                        blob_name, 
+                                        gc_bucket, 
+                                        tipo_documento, 
+                                        dir_cargas, 
+                                        host, 
+                                        port, 
+                                        password)
+            return doc, 200
+
+        else:
+            return 'Tipo de carga no valida', 400
+    except Exception as e:
+        print(e)
+        return "No ha sido posible la carga del documento", 400

@@ -8,9 +8,29 @@ import cv2
 from config import DevelopmentConfig
 import base64
 
+import os
+import openai
+
+openai.organization = DevelopmentConfig.OPENAI_ORGANIZATION
+openai.api_key = DevelopmentConfig.OPENAI_APIKEY
+openai.Model.list()
+
 host = DevelopmentConfig.REDIS_HOST
 port = DevelopmentConfig.REDIS_PORT
 password = DevelopmentConfig.REDIS_PASSWORD
+
+def categorizar_doc(texto, prompt):
+    completions = openai.Completion.create(
+        model="text-davinci-003",
+        prompt=prompt,
+        max_tokens=1024,
+        n=1,
+        stop=None,
+        temperature=0,
+    )
+
+    message = completions.choices[0].text
+    return message
 
 def normalizar_vocales(s):
     reemplazos = (
@@ -81,6 +101,7 @@ def validar_documento(texto, tipo_doc, ruta_doc, dir_uploads):
     from ine import comprobar_validez_INE
     from curp import validar_CURP
     from cfdi import validar_CFDI
+    from pasaporte import extraer_datos_pasaporte
 
     if tipo_doc == 'INE':
         print('Valindando INE')
@@ -102,12 +123,16 @@ def validar_documento(texto, tipo_doc, ruta_doc, dir_uploads):
         info_doc = validar_CFDI(ruta_doc, dir_uploads)
         #print(info_doc)
 
+    elif tipo_doc == 'Pasaporte':
+        info_doc = extraer_datos_pasaporte(texto)
+        print('Validando Pasaporte')
+
     else:
         tipo_doc = 'Desconocido'
         info_doc = {}
     
-    #resultado_json['info_documento'] = info_doc
-    #print(resultado_json)
+    # resultado_json['info_documento'] = info_doc
+    # print(resultado_json)
 
     # try:
     #     rj = Client(host=host, port=port, password=password)       

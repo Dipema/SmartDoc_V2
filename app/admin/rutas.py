@@ -32,6 +32,7 @@ def consultar():
     clave_empresa = request.args.get('clave')
     tipo_documento = request.args.get('tdoc')
     token = request.args.get('token')
+    tipo_consulta = request.args.get('tcons')
 
     try: 
         connection = psycopg2.connect(
@@ -43,35 +44,51 @@ def consultar():
         )
 
         cursor = connection.cursor()
-        query = f'''SELECT nombre_documento FROM bitacora_carga_documentos WHERE (tipo_documento = '{tipo_documento}' AND rfc = '{RFC}');'''
+        query = f'''SELECT nombre_documento, informacion_documento FROM bitacora_carga_documentos WHERE (tipo_documento = '{tipo_documento}' AND rfc = '{RFC}' AND clave_empresa = '{clave_empresa}');'''
         cursor.execute(query)
         respuesta = cursor.fetchall()
-        nombre_blob = respuesta[0][0]
+        info_doc = respuesta[0][1]
+        if tipo_consulta == 's':
+            try:
+                consulta = Bitacora_Consultas()
+                consulta.clave_empresa = clave_empresa
+                consulta.rfc = RFC
+                consulta.tipo_documento = tipo_documento
+                consulta.fecha_consulta = datetime.utcnow().isoformat()
+                consulta.save()
+            except Exception as e:
+                print(e)
 
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = current_app.config['GOOGLE_CLOUD_CREDENTIALS']
-        gs_bucket = current_app.config['GOOGLE_CLOUD_BUCKET']
-        ruta_descarga = os.path.join(current_app.config['DIR_DESCARGAS'], nombre_blob)
-        nombre_blob = f"{clave_empresa}/{RFC}/{nombre_blob}"
+            return info_doc
 
-        try:
-            descargar_blob(gs_bucket, nombre_blob, ruta_descarga)
-        except Exception as e:
-            print(e)
-            return 'El documento no ha sido encotrado'
+        elif tipo_consulta == 'c':
+            nombre_doc = respuesta[0][0]
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = current_app.config['GOOGLE_CLOUD_CREDENTIALS']
+            gs_bucket = current_app.config['GOOGLE_CLOUD_BUCKET']
+            ruta_descarga = os.path.join(current_app.config['DIR_DESCARGAS'], nombre_doc)
+            nombre_blob = f"{clave_empresa}/{RFC}/{tipo_documento}/{nombre_doc}"
 
-        doc_base64 = convertir_base64(ruta_descarga)
+            try:
+                descargar_blob(gs_bucket, nombre_blob, ruta_descarga)
+            except Exception as e:
+                print(e)
+                return 'El documento no ha sido encotrado'
 
-        try:
-            consulta = Bitacora_Consultas()
-            consulta.clave_empresa = clave_empresa
-            consulta.rfc = RFC
-            consulta.tipo_documento = tipo_documento
-            consulta.fecha_consulta = datetime.utcnow().isoformat()
-            consulta.save()
-        except Exception as e:
-            print(e)
+            doc_base64 = convertir_base64(ruta_descarga)
+            try:
+                consulta = Bitacora_Consultas()
+                consulta.clave_empresa = clave_empresa
+                consulta.rfc = RFC
+                consulta.tipo_documento = tipo_documento
+                consulta.fecha_consulta = datetime.utcnow().isoformat()
+                consulta.save()
+            except Exception as e:
+                print(e)
 
-        return doc_base64
+            return [info_doc, doc_base64]
+        
+        else:
+            return 'Tipo de consulta no valida', 400
 
     except (Exception, psycopg2.Error) as error:
         print("Error while fetching data from PostgreSQL", error)
@@ -102,26 +119,9 @@ def consultar_rfc():
         )
 
         cursor = connection.cursor()
-        query = f'''SELECT nombre_documento, tipo_documento FROM bitacora_carga_documentos WHERE  rfc = '{RFC}';'''
+        query = f'''SELECT tipo_documento, informacion_documento FROM bitacora_carga_documentos WHERE  (rfc = '{RFC}' AND clave_empresa = '{clave_empresa}');'''
         cursor.execute(query)
         respuesta = cursor.fetchall()
-
-        blobs = []
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = current_app.config['GOOGLE_CLOUD_CREDENTIALS']
-        gs_bucket = current_app.config['GOOGLE_CLOUD_BUCKET']
-        for res in respuesta:
-            nombre_blob = res[0]
-            tipo_documento = res[1]
-            ruta_descarga = os.path.join(current_app.config['DIR_DESCARGAS'], nombre_blob)
-            nombre_blob = f"{clave_empresa}/{RFC}/{nombre_blob}"
-            try:
-                descargar_blob(gs_bucket, nombre_blob, ruta_descarga)
-            except Exception as e:
-                print(e)
-                return 'El documento no ha sido encotrado'
-
-            doc_base64 = convertir_base64(ruta_descarga)
-            blobs.append({'tipo_documento': tipo_documento, 'documento_base64': doc_base64})
 
         try:
             consulta = Bitacora_Consultas()
@@ -142,4 +142,4 @@ def consultar_rfc():
             cursor.close()
             connection.close()
             print("PostgreSQL connection is closed")
-        return blobs            
+        return respuesta            
