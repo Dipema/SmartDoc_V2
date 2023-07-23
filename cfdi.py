@@ -32,13 +32,9 @@ def validar_CFDI(ruta_doc, dir_uploads):
         cliente  = Client(wsdl)
         respuesta = cliente.service.Consulta(soap_request)
 
-        respuesta_json = {
-            'CodigoEstatus': re.findall(r"'CodigoEstatus': '(.*?)',", str(respuesta))[0],
-            'EsCancelable': re.findall(r"'EsCancelable': '(.*?)',", str(respuesta))[0],
-            'Estado': re.findall(r"'Estado': '(.*?)',", str(respuesta))[0],
-            'EstatusCancelacion': re.findall(r"'EstatusCancelacion': (.*?),", str(respuesta))[0],
-            'ValidacionEFOS': re.findall(r"'ValidacionEFOS': '(.*?)'", str(respuesta))[0]
-        }
+        respuesta_json = {}
+        for d in dir(respuesta):
+            respuesta_json[d] = respuesta[d]
         return respuesta_json
 
     except Exception as e:

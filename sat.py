@@ -44,7 +44,9 @@ def extraer_datos_ConstanciaSAT(filename, dir_uploads):
         infoTabla = re.findall(r'<span style="font-weight: bold;">(.*?):</span>', cadaTabla[1])
         if (flag == 'llave'):
             if ('span' in cadaTabla[1]) and (infoTabla != []):
-                Llaves.append(normalizar_vocales(infoTabla[0]))
+                llave = normalizar_vocales(infoTabla[0])
+                llave = re.sub(r"(_|-)+", " ", llave).title().replace(" ", "")
+                Llaves.append(''.join([llave[0].lower(), llave[1:]]))
                 flag = 'valor'
         else:
             Valores.append(normalizar_vocales(cadaTabla[1]))

@@ -7,30 +7,39 @@ from pdf2image import convert_from_path
 import cv2
 from config import DevelopmentConfig
 import base64
+from PyPDF2 import PdfWriter, PdfReader
 
 import os
 import openai
+import psycopg2
 
-openai.organization = DevelopmentConfig.OPENAI_ORGANIZATION
-openai.api_key = DevelopmentConfig.OPENAI_APIKEY
-openai.Model.list()
+# openai.organization = DevelopmentConfig.OPENAI_ORGANIZATION
+# openai.api_key = DevelopmentConfig.OPENAI_APIKEY
+# openai.Model.list()
 
 host = DevelopmentConfig.REDIS_HOST
 port = DevelopmentConfig.REDIS_PORT
 password = DevelopmentConfig.REDIS_PASSWORD
 
-def categorizar_doc(texto, prompt):
-    completions = openai.Completion.create(
-        model="text-davinci-003",
-        prompt=prompt,
-        max_tokens=1024,
-        n=1,
-        stop=None,
-        temperature=0,
-    )
+def extraer_pagina(doc_name, page_num):
+    pdf_reader = PdfReader(open(doc_name, 'rb'))
+    pdf_writer = PdfWriter()
+    pdf_writer.add_page(pdf_reader.pages[page_num])
+    with open(f'{doc_name}', 'wb') as doc_file:
+        pdf_writer.write(doc_file)
 
-    message = completions.choices[0].text
-    return message
+# def categorizar_doc(prompt):
+#     completions = openai.Completion.create(
+#         model="text-davinci-003",
+#         prompt=prompt,
+#         max_tokens=1024,
+#         n=1,
+#         stop=None,
+#         temperature=0,
+#     )
+
+    # message = completions.choices[0].text
+    # return message
 
 def normalizar_vocales(s):
     reemplazos = (
@@ -70,7 +79,7 @@ def leer_codigo_QR(ruta_doc, dir_uploads):
     
         # Save pages as images in the pdf
             #new_page_filename = f'/Users/pears/Desktop/prueba/pagina'+ str(i) +'.jpg'
-            new_page_filename = dir_uploads + '/pagina' + str(i) +'.jpg'
+            new_page_filename = dir_uploads + '/pagina' + str(i) +'.jpeg'
             images[i].save(new_page_filename, 'JPEG')  
 
             try:
@@ -97,48 +106,51 @@ def leer_codigo_QR(ruta_doc, dir_uploads):
 
 def validar_documento(texto, tipo_doc, ruta_doc, dir_uploads):
 
+    print(tipo_doc)
+
     from sat import extraer_datos_ConstanciaSAT
-    from ine import comprobar_validez_INE
+    from ine import extraer_datos_INE
     from curp import validar_CURP
     from cfdi import validar_CFDI
     from pasaporte import extraer_datos_pasaporte
+    from solicitud_cred import extraer_datos_sol_cred
+    from edo_cta import extraer_datos_edo_cta
 
     if tipo_doc == 'INE':
         print('Valindando INE')
-        info_doc = comprobar_validez_INE(texto, nombre_doc, dir_uploads)
-        #print(info_doc)
+        info_doc = extraer_datos_INE(texto)
 
     elif tipo_doc == 'CURP':
         print('Valindando CURP')
         info_doc = validar_CURP(ruta_doc, dir_uploads)
-        #print(info_doc)
         
-    elif tipo_doc == 'Constancia_SAT':
+    elif tipo_doc == 'ConstanciaSAT':
         print('Valindando Constancia SAT')
         info_doc = extraer_datos_ConstanciaSAT(ruta_doc, dir_uploads)
-        #print(info_doc)
 
     elif tipo_doc == 'CFDI':
         print('Valindando CFDI')
         info_doc = validar_CFDI(ruta_doc, dir_uploads)
-        #print(info_doc)
 
     elif tipo_doc == 'Pasaporte':
-        info_doc = extraer_datos_pasaporte(texto)
         print('Validando Pasaporte')
+        info_doc = extraer_datos_pasaporte(texto)
+
+    elif tipo_doc == 'ComprobanteDomicilio':
+        print('Validando Comprobante de domicilio')
+        info_doc = 'Sigue en desarrollo'
+
+    elif tipo_doc == 'EdoCta':
+        print('Validando Estado de Cuenta')
+        info_doc = extraer_datos_edo_cta(ruta_doc, dir_uploads)
+
+    elif tipo_doc == 'SolCred':
+        print('Validando Solicitud de Credito')
+        info_doc = extraer_datos_sol_cred(ruta_doc, dir_uploads)
 
     else:
-        tipo_doc = 'Desconocido'
+        print('Documento no disponible')
         info_doc = {}
-    
-    # resultado_json['info_documento'] = info_doc
-    # print(resultado_json)
-
-    # try:
-    #     rj = Client(host=host, port=port, password=password)       
-    #     rj.jsonset('file:{}'.format(resultado_json['nombre_documento']), Path.rootPath(), resultado_json)
-    # except Exception as e:
-    #     print(e)
 
     return info_doc
 
@@ -156,3 +168,32 @@ def verificar_status_trabajos(id, file_path):
             print(e)
             continuar = False 
     return resultado_json
+
+def consultar_supabse():
+    try: 
+        connection = psycopg2.connect(
+            host = host,
+            port = port,
+            database = database,
+            user = user,
+            password = password
+            )
+
+        cursor = connection.cursor()
+        query = f'''SELECT * FROM bitacora_carga_documentos;'''
+        cursor.execute(query)
+
+        respuesta = cursor.fetchall()
+        print('=' * 15, 'RESPUESTA','=' * 15, '\n', respuesta, '\n'* 3)
+        dtime = respuesta[0][-1]
+        
+    except (Exception, psycopg2.Error) as error:
+        print("Error while fetching data from PostgreSQL", error)
+
+    finally:
+        # closing database connection.
+        if connection:
+            cursor.close()
+            connection.close()
+            print("PostgreSQL connection is closed")
+
